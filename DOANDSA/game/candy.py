@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 import random
 from constants import CANDY_TYPES, GRID_ROWS, GRID_COLS
@@ -8,8 +9,8 @@ STRIPED_H   = "striped_h"   # match 4 in a row  → clears whole row
 STRIPED_V   = "striped_v"   # match 4 in a col  → clears whole column
 WRAPPED     = "wrapped"     # L/T shape (5)      → clears 3×3 twice
 COLOR_BOMB  = "color_bomb"  # 5 in a line        → clears all of one color
+
 class Candy:
-    """Single candy tile on the board."""
 
     def __init__(self, candy_type: str = None, special_type = NORMAL):
         self.candy_type:   str  = candy_type or random.choice(CANDY_TYPES)
@@ -18,7 +19,6 @@ class Candy:
         self.is_new:       bool = True
 
    
-    # Hàm activate được gọi khi board chọn candy đặc biệt (Kích hoạt kỹ năng đặc biệt của candies)
     def activate(self, row: int, col: int, board, target: "Candy | None" = None) -> list[tuple]:
 
         if self.special_type == STRIPED_H:
@@ -46,8 +46,8 @@ class Candy:
         else:
             return []
 
-    # Combo khi kết hợp các viên kẹo có hiệu ứng đặc biệt với nhau
     def combo_with(self, other: "Candy", row: int, col: int, board) -> list[tuple]:
+
         dele = []
         Strip = [STRIPED_H, STRIPED_V]
         # Nếu combo Đặc biệt 2 color Bomb thì xóa nguyên sàn

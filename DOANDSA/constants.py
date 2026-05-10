@@ -33,9 +33,26 @@ ANIM_POP_DURATION    = 0.50
 ANIM_FALL_SPEED      = 350
 
 INITIAL_MOVES = 30
+TARGET_SCORE  = 2000
+HINT_DELAY    = 30.0
 SCORE_PER_CANDY = 60
 COMBO_MULTIPLIER = 1.1
 
 FONT_LARGE  = 76
 FONT_MEDIUM = 48
 FONT_SMALL  = 28
+
+# Accent & glow colors
+ACCENT_GOLD   = (255, 210,  60)
+ACCENT_PURPLE = (180,  80, 255)
+GLOW_CYAN     = ( 80, 220, 255)
+
+# Per-candy glow color (used for glow ring around each gem)
+CANDY_GLOW_COLORS = {
+    "red":    (255, 100, 120),
+    "orange": (255, 170,  70),
+    "yellow": (255, 245, 100),
+    "green":  ( 80, 255, 130),
+    "blue":   ( 80, 190, 255),
+    "purple": (210, 100, 255),
+}

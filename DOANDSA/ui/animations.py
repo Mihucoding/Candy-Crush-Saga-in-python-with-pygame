@@ -4,7 +4,7 @@ import pygame
 from constants import (
     CELL_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y,
     ANIM_SWAP_DURATION, ANIM_POP_DURATION, ANIM_FALL_SPEED,
-    SCREEN_WIDTH, SCREEN_HEIGHT,
+    SCREEN_WIDTH, SCREEN_HEIGHT, CANDY_COLORS,
 )
 from game.candy import STRIPED_H, STRIPED_V, WRAPPED, COLOR_BOMB
 
@@ -145,27 +145,34 @@ class SwapAnim:
 
 
 class PopAnim:
-    def __init__(self, positions: list[tuple]):
+    def __init__(self, positions: list[tuple], candy_colors: dict = None):
         self.positions = positions
         self.elapsed = 0.0
         self.done = False
         self.particles: list[dict] = []
+        _fallback = [
+            (255, 255, 255), (255, 240, 80), (255, 190, 40),
+            (255, 120, 200), (100, 220, 255), (160, 255, 100),
+        ]
         for r, c in positions:
             cx, cy = _cell_center(r, c)
-            # Increased particle count for more "juice"
+            ctype = candy_colors.get((r, c)) if candy_colors else None
+            base = CANDY_COLORS.get(ctype) if ctype else None
             for _ in range(16):
                 ang = random.uniform(0, 2 * math.pi)
                 spd = random.uniform(150, 400)
+                if base:
+                    v = random.randint(-40, 60)
+                    color = tuple(max(0, min(255, ch + v)) for ch in base)
+                else:
+                    color = random.choice(_fallback)
                 self.particles.append({
                     'x': cx, 'y': cy,
                     'vx': math.cos(ang) * spd,
                     'vy': math.sin(ang) * spd,
                     'life': 1.0,
                     'size': random.randint(3, 7),
-                    'color': random.choice([
-                        (255, 255, 255), (255, 240, 80), (255, 190, 40),
-                        (255, 120, 200), (100, 220, 255), (160, 255, 100),
-                    ])
+                    'color': color,
                 })
 
     def update(self, dt: float):
@@ -413,6 +420,30 @@ class SpecialBreakEffect:
             surface.blit(glow_surf, (0, 0))
 
 
+class ScreenShake:
+    """Short camera shake — returns (dx, dy) offset each frame."""
+    def __init__(self, intensity: float = 8.0, duration: float = 0.35):
+        self.intensity = intensity
+        self.elapsed   = 0.0
+        self.duration  = duration
+        self.done      = False
+
+    def update(self, dt: float):
+        self.elapsed += dt
+        if self.elapsed >= self.duration:
+            self.done = True
+
+    def get_offset(self) -> tuple:
+        if self.done:
+            return (0, 0)
+        t = self.elapsed / self.duration
+        decay = (1.0 - t) ** 2
+        freq  = 40.0
+        ox = self.intensity * decay * math.sin(t * freq)
+        oy = self.intensity * decay * math.cos(t * freq * 1.3)
+        return (ox, oy)
+
+
 class AnimationManager:
     def __init__(self):
         self._active: list = []
@@ -423,7 +454,11 @@ class AnimationManager:
 
     @property
     def is_busy(self) -> bool:
-        return len(self._active) > 0
+        return (
+            len(self._active) > 0
+            or any(not b.done for b in self._banners)
+            or any(not b.done for b in self._breaks)
+        )
 
     def add(self, anim) -> None:
         self._active.append(anim)

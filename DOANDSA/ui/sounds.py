@@ -1,5 +1,6 @@
 import math
 import array
+import os
 import pygame
 import random
 
@@ -94,7 +95,9 @@ def _noise_pop(volume: float = 0.4) -> pygame.mixer.Sound:
 class SoundManager:
     def __init__(self):
         self._sounds: dict[str, pygame.mixer.Sound] = {}
-        self._enabled = True
+        self._enabled  = True
+        self._sfx_vol  = 1.0
+        self._music_vol = 0.5
         self._build()
 
     def _build(self) -> None:
@@ -135,3 +138,35 @@ class SoundManager:
     def toggle(self) -> bool:
         self._enabled = not self._enabled
         return self._enabled
+
+    # --- Music ---
+
+    def start_music(self, path: str) -> None:
+        """Load và play nhạc nền, loop vô tận. Bỏ qua nếu file không tồn tại."""
+        try:
+            if not os.path.exists(path):
+                print(f"[WARN] Music file not found: {path}")
+                return
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.set_volume(self._music_vol)
+            pygame.mixer.music.play(-1)
+            print(f"[OK] Music loaded: {path}")
+        except Exception as e:
+            print(f"[ERR] Error loading music from {path}: {e}")
+
+    def set_music_volume(self, vol: float) -> None:
+        self._music_vol = max(0.0, min(1.0, vol))
+        pygame.mixer.music.set_volume(self._music_vol)
+
+    def get_music_volume(self) -> float:
+        return self._music_vol
+
+    # --- SFX ---
+
+    def set_sfx_volume(self, vol: float) -> None:
+        self._sfx_vol = max(0.0, min(1.0, vol))
+        for sound in self._sounds.values():
+            sound.set_volume(self._sfx_vol)
+
+    def get_sfx_volume(self) -> float:
+        return self._sfx_vol

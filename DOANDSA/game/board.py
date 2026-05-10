@@ -1,17 +1,36 @@
 from __future__ import annotations
+import random
 from typing import Optional
-from constants import GRID_ROWS, GRID_COLS
+from constants import GRID_ROWS, GRID_COLS, CANDY_TYPES
 from game.candy import Candy, NORMAL, COLOR_BOMB , STRIPED_H, STRIPED_V
-from game.match_finder import MatchFinder 
+from game.match_finder import MatchFinder
 
 class Board:
-    """2D grid of Candy objects. Pure data — no pygame imports."""
-    # Tạo 1 mảng 2 Chiều các viên kẹo ( bao gồm các loại bình thường và đặc biệt)
-    def __init__(self):
-        self.grid: list[list[Optional[Candy]]] = [
-            [Candy() for _ in range(GRID_COLS)]
-            for _ in range(GRID_ROWS)
-        ]
+
+    # Tạo 1 mảng 2 Chiều các viên kẹo, tránh matches ngay từ đầu
+    def __init__(self, cage_positions=None, hostage_positions=None):
+        self.grid: list[list[Optional[Candy]]] = [[None] * GRID_COLS for _ in range(GRID_ROWS)]
+        self.removed_colors: list[str] = []
+        self.hostages: set[tuple] = set(hostage_positions or [])
+        self.rescued_count: int = 0
+        self.cages: dict[tuple, int] = {(r, c): hp for r, c, hp in (cage_positions or [])}
+        for r in range(GRID_ROWS):
+            for c in range(GRID_COLS):
+                forbidden = set()
+                # Kiểm tra 2 ô bên trái
+                if c >= 2:
+                    left1 = self.grid[r][c - 1]
+                    left2 = self.grid[r][c - 2]
+                    if left1 and left2 and left1.candy_type == left2.candy_type:
+                        forbidden.add(left1.candy_type)
+                # Kiểm tra 2 ô phía trên
+                if r >= 2:
+                    up1 = self.grid[r - 1][c]
+                    up2 = self.grid[r - 2][c]
+                    if up1 and up2 and up1.candy_type == up2.candy_type:
+                        forbidden.add(up1.candy_type)
+                available = [t for t in CANDY_TYPES if t not in forbidden] or list(CANDY_TYPES)
+                self.grid[r][c] = Candy(random.choice(available))
 
     
     # Check kẹo để sử dụng , có được sài trong phần UI
@@ -32,10 +51,10 @@ class Board:
         candy2 = self.get_candy(r2,c2)
         # Đảm bảo không lỗi
         if not candy1 or not candy2 :
-            return False, []
+            return False, [], []
         #Không cạnh nhau thì sẽ không swap được
         if not self.is_adjacent(r1,c1,r2,c2) :
-            return False, []
+            return False, [], []
         activations = []
         # Check Combo đặc biệt trước
         # Check Combo 2 viên kẹo dặc biệt
@@ -51,9 +70,9 @@ class Board:
             #Nếu không thì áp dụng hiệu ứng combo 2 viên kẹo đặc biệt bình thường
                 dele = candy1.combo_with(candy2,r2,c2,self)
                 activations = self.remove_matches(dele)
-            return True, activations
-            
-        self.grid[r1][c1] , self.grid[r2][c2] =  self.grid[r2][c2] , self.grid[r1][c1] 
+            return True, activations, [set(dele)] if dele else []
+
+        self.grid[r1][c1] , self.grid[r2][c2] =  self.grid[r2][c2] , self.grid[r1][c1]
         
         #Check combo 1 viên special và 1 thường
         if candy1.special_type != NORMAL or candy2.special_type != NORMAL:
@@ -63,14 +82,14 @@ class Board:
             else:
                 dele = candy2.activate(r1,c1,self,candy1)
                 activations = self.remove_matches(dele)
-            return True, activations
+            return True, activations, [set(dele)] if dele else []
         #Check xem có matches
         finder = MatchFinder()
         check = finder.find_matches(self)
         if not check:
             #Nếu không trùng thì đổi lại vị trí và return False
-            self.grid[r1][c1] , self.grid[r2][c2] =  self.grid[r2][c2] , self.grid[r1][c1] 
-            return False, []
+            self.grid[r1][c1] , self.grid[r2][c2] =  self.grid[r2][c2] , self.grid[r1][c1]
+            return False, [], []
         else:
             #Nếu matches thì check combo và trả về viên kẹo đặc biệt nếu có
             dele = []
@@ -90,7 +109,7 @@ class Board:
                 else:
                     dele += list(can)
             activations = self.remove_matches(dele)
-            return True, activations
+            return True, activations, check
 
 
     # Xóa matches
@@ -98,14 +117,21 @@ class Board:
         activations = []
         to_clear = set(positions)
         processed = set()
+        _cages_hit: set[tuple] = set()
         #Chạy từng viên kẹo
         while to_clear:
             r, c = to_clear.pop()
             if (r, c) in processed:
                 continue
-            #Nếu bình thường thì xóa và tiếp
             candy = self.get_candy(r, c)
             if candy is None:
+                continue
+            # Con tin bất tử — xóa kẹo ngay bên dưới để con tin có chỗ rơi
+            if (r, c) in self.hostages:
+                processed.add((r, c))
+                nr = r + 1
+                if nr < GRID_ROWS and (nr, c) not in self.hostages:
+                    to_clear.add((nr, c))
                 continue
             #Nếu có đặc biệt thì phải kích hoạt đặc biệt trước
             if candy.special_type != NORMAL:
@@ -113,6 +139,16 @@ class Board:
                 extra = candy.activate(r, c, self)
                 to_clear.update(extra)
 
+            # Phá lồng cạnh ô bị xóa (mỗi lồng chỉ nhận 1 damage / lần remove)
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr, nc = r + dr, c + dc
+                if (nr, nc) in self.cages and (nr, nc) not in _cages_hit:
+                    _cages_hit.add((nr, nc))
+                    self.cages[(nr, nc)] -= 1
+                    if self.cages[(nr, nc)] <= 0:
+                        del self.cages[(nr, nc)]
+
+            self.removed_colors.append(candy.candy_type)
             self.grid[r][c] = None
             processed.add((r, c))
         #Trả về các viên kẹo đặc biệt để kích hoạt hiệu ứng UI
@@ -128,16 +164,28 @@ class Board:
                 if self.grid[row][col] is not None:
                     stack.append((row, self.grid[row][col]))
 
-            # Ghi lại vị trí mới từ dưới lên
-            for i, (from_row, candy) in enumerate(stack):
-                to_row = GRID_ROWS - 1 - i
+            # Dùng `placed` thay vì `i` để tính to_row
+            # — tránh tạo hole ở đáy khi rescue con tin
+            placed = 0
+            for from_row, candy in stack:
+                to_row = GRID_ROWS - 1 - placed
+                # Con tin chạm đáy → giải cứu, không đặt vào grid
+                if (from_row, col) in self.hostages and to_row == GRID_ROWS - 1:
+                    self.hostages.discard((from_row, col))
+                    self.rescued_count += 1
+                    continue  # không tăng placed → các kẹo phía trên fill xuống
                 self.grid[to_row][col] = candy
+                if (from_row, col) in self.hostages:
+                    self.hostages.discard((from_row, col))
+                    self.hostages.add((to_row, col))
                 if from_row != to_row:
                     moves.append((from_row, col, to_row, col))
+                placed += 1
 
-            # Các ô trống phía trên gàn bằng None để có thể fill lại
-            for row in range(GRID_ROWS - len(stack)):
+            # Các ô trống phía trên set None để fill_empty xử lý đúng
+            for row in range(GRID_ROWS - placed):
                 self.grid[row][col] = None
+
         return moves
 
     def fill_empty(self) -> list[tuple[int, int, int, int]]:

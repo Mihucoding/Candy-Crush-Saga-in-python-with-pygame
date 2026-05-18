@@ -47,6 +47,152 @@ def _render_3d(font, text, color, depth=5, shadow_col=None):
     return surf
 
 
+def _render_arcade_title(font, text, top_color, bot_color, depth=10,
+                         extrude_color=(70, 20, 80), outline_color=(30, 10, 50)):
+    """Arcade-style 3D extruded title with vertical gradient face.
+
+    Why: replicates the chunky ARCADE-poster look (gradient face + dark side
+    extrusion + outline) while staying readable on the bright pastel BG.
+    """
+    base = font.render(text, True, (255, 255, 255))
+    w, h = base.get_size()
+    pad = depth + 4
+    canvas = pygame.Surface((w + pad * 2, h + pad * 2), pygame.SRCALPHA)
+    cx, cy = pad, pad
+
+    # 1) Extrusion layers (down-right diagonal) — darker shade
+    for i in range(depth, 0, -1):
+        t = i / depth
+        col = (int(extrude_color[0] * (0.55 + 0.45 * t)),
+               int(extrude_color[1] * (0.55 + 0.45 * t)),
+               int(extrude_color[2] * (0.55 + 0.45 * t)))
+        layer = font.render(text, True, col)
+        canvas.blit(layer, (cx + i, cy + i))
+
+    # 2) Outline (chunky black border) — render text in outline color at 8 offsets
+    outline_w = 3
+    for dx in range(-outline_w, outline_w + 1):
+        for dy in range(-outline_w, outline_w + 1):
+            if dx == 0 and dy == 0:
+                continue
+            if dx * dx + dy * dy > outline_w * outline_w + 1:
+                continue
+            canvas.blit(font.render(text, True, outline_color), (cx + dx, cy + dy))
+
+    # 3) Front face: vertical gradient mask
+    face = font.render(text, True, (255, 255, 255))
+    fw, fh = face.get_size()
+    grad = pygame.Surface((fw, fh), pygame.SRCALPHA)
+    for y in range(fh):
+        r = y / max(fh - 1, 1)
+        col = (int(_lerp(top_color[0], bot_color[0], r)),
+               int(_lerp(top_color[1], bot_color[1], r)),
+               int(_lerp(top_color[2], bot_color[2], r)), 255)
+        pygame.draw.line(grad, col, (0, y), (fw, y))
+    grad.blit(face, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    canvas.blit(grad, (cx, cy))
+
+    # 4) Top highlight band — sharper top edge to suggest light source
+    hl = pygame.Surface((fw, fh), pygame.SRCALPHA)
+    for y in range(max(1, fh // 4)):
+        a = int(180 * (1 - y / (fh / 4)))
+        pygame.draw.line(hl, (255, 255, 255, a), (0, y), (fw, y))
+    hl.blit(face, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    canvas.blit(hl, (cx, cy))
+    return canvas
+
+
+# --- Pixel-art button -------------------------------------------------------
+_BTN_PALETTE = {
+    # base, top-highlight, bottom-shadow, border (dark), glow
+    "green":  ((100, 200,  90), (170, 240, 150), ( 50, 140,  60), ( 30,  80,  40), ( 80, 255, 140)),
+    "coral":  ((230, 110, 120), (255, 175, 185), (170,  60,  80), ( 90,  25,  40), (255, 130, 160)),
+    "orange": ((255, 165,  70), (255, 215, 130), (200, 100,  30), (110,  50,  10), (255, 200, 100)),
+    "yellow": ((255, 215,  70), (255, 240, 150), (210, 160,  20), (110,  80,   5), (255, 240, 120)),
+    "blue":   (( 90, 175, 240), (160, 220, 255), ( 40, 110, 190), ( 15,  55, 100), (120, 210, 255)),
+}
+
+# Which palette each button label uses
+_BTN_COLOR_BY_KEY = {
+    "play": "green", "next": "green", "next level": "green", "resume": "green",
+    "retry": "orange",
+    "quit": "coral", "menu": "coral", "back": "coral",
+}
+
+
+def _pixel_button(surface, text, rect, hovered=False, color="coral"):
+    """Pixel-art button: chamfered corners, top highlight, bottom shadow, dark border.
+
+    Why: matches the user's chosen 8-bit retro arcade style. Hover brightens
+    the base and adds a soft halo glow.
+    """
+    base, top_hl, bot_sh, border, glow = _BTN_PALETTE.get(color, _BTN_PALETTE["coral"])
+    if hovered:
+        base   = tuple(min(255, int(c * 1.18)) for c in base)
+        top_hl = tuple(min(255, int(c * 1.10)) for c in top_hl)
+
+    # Soft halo glow on hover
+    if hovered:
+        halo_pad = 14
+        halo = pygame.Surface((rect.w + halo_pad * 2, rect.h + halo_pad * 2), pygame.SRCALPHA)
+        for i in range(halo_pad, 0, -2):
+            a = int(70 * (1 - i / halo_pad))
+            pygame.draw.rect(halo, (*glow, a),
+                             halo.get_rect().inflate(-i*2 + halo_pad*2 - rect.w*0, -i*2 + halo_pad*2 - rect.h*0),
+                             border_radius=8)
+        # Simpler: just draw expanding translucent rects
+        halo = pygame.Surface((rect.w + halo_pad * 2, rect.h + halo_pad * 2), pygame.SRCALPHA)
+        for i in range(halo_pad, 0, -2):
+            a = int(60 * (1 - i / halo_pad))
+            r = pygame.Rect(halo_pad - i, halo_pad - i, rect.w + 2*i, rect.h + 2*i)
+            pygame.draw.rect(halo, (*glow, a), r, border_radius=6)
+        surface.blit(halo, (rect.x - halo_pad, rect.y - halo_pad))
+
+    # Chamfered corner mask (pixel-art rounded look): cut 2px from each corner
+    CHAMFER = 3
+    body = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+    # 1) Border (full chamfered rect filled with dark border color)
+    pygame.draw.rect(body, border, (CHAMFER, 0, rect.w - 2*CHAMFER, rect.h))
+    pygame.draw.rect(body, border, (0, CHAMFER, rect.w, rect.h - 2*CHAMFER))
+    # corner pixels (1px chamfer ladder)
+    for k in range(1, CHAMFER):
+        pygame.draw.rect(body, border, (CHAMFER - k, k, rect.w - 2*(CHAMFER - k), 1))
+        pygame.draw.rect(body, border, (CHAMFER - k, rect.h - k - 1, rect.w - 2*(CHAMFER - k), 1))
+
+    BORDER_W = 3
+    # 2) Inner base fill (inset by border width)
+    inner = pygame.Rect(BORDER_W, BORDER_W, rect.w - 2*BORDER_W, rect.h - 2*BORDER_W)
+    pygame.draw.rect(body, base, inner)
+    # Slightly clip inner top/bottom corners for chamfer continuity
+    pygame.draw.rect(body, base, (BORDER_W + 1, BORDER_W - 1, inner.w - 2, 1))
+    pygame.draw.rect(body, base, (BORDER_W + 1, rect.h - BORDER_W, inner.w - 2, 1))
+
+    # 3) Top highlight band (2px)
+    pygame.draw.rect(body, top_hl, (inner.x + 1, inner.y, inner.w - 2, 2))
+    pygame.draw.rect(body, top_hl, (inner.x, inner.y + 1, 2, 1))
+    pygame.draw.rect(body, top_hl, (inner.right - 2, inner.y + 1, 2, 1))
+
+    # 4) Bottom shadow band (2px)
+    pygame.draw.rect(body, bot_sh, (inner.x + 1, inner.bottom - 2, inner.w - 2, 2))
+
+    surface.blit(body, rect.topleft)
+
+    # 5) Label — Lilita One, white with subtle dark shadow
+    font = _get_pixel_font(max(20, int(rect.h * 0.45)))
+    label_surf = font.render(text, True, (255, 255, 255))
+    shadow_surf = font.render(text, True, border)
+    tx = rect.centerx - label_surf.get_width() // 2
+    ty = rect.centery - label_surf.get_height() // 2 - 2
+    surface.blit(shadow_surf, (tx + 2, ty + 2))
+    surface.blit(label_surf,  (tx, ty))
+
+
+def _btn(surface, text, rect, hovered, color_key=None):
+    """Convenience wrapper: pick palette from text if color_key not given."""
+    key = (color_key or _BTN_COLOR_BY_KEY.get(text.lower().strip(), "coral"))
+    _pixel_button(surface, text, rect, hovered=hovered, color=key)
+
+
 def _lerp(a, b, t): return a + (b - a) * t
 
 
@@ -156,8 +302,8 @@ class MenuScreen:
         self.particles = [_Particle() for _ in range(22)]
         self.t = 0.0
         self.buttons = {
-            "play": pygame.Rect(SCREEN_WIDTH//2 - 110, 370, 220, 56),
-            "quit": pygame.Rect(SCREEN_WIDTH//2 - 110, 444, 220, 56),
+            "play": pygame.Rect(SCREEN_WIDTH//2 - 130, 430, 260, 68),
+            "quit": pygame.Rect(SCREEN_WIDTH//2 - 130, 520, 260, 68),
         }
 
     def update(self, dt):
@@ -179,28 +325,23 @@ class MenuScreen:
             pygame.draw.circle(ring_s, (255,255,255,a), (r2,r2), r2, 3)
             surface.blit(ring_s, (SCREEN_WIDTH//2 - r2, 300 - r2))
 
-        # Wave title — each letter bounces individually
-        title = "CANDY CRUSH"; colors = list(CANDY_COLORS.values())
-        font = _get_font(58)
-        total_w = sum(font.size(ch)[0] for ch in title)
-        tx = SCREEN_WIDTH//2 - total_w//2
-        for i, ch in enumerate(title):
-            wave_y = 14 * math.sin(self.t * 3.0 + i * 0.55)
-            col_idx = (i + int(self.t * 2.5)) % len(colors)
-            # Glow shadow
-            shadow = font.render(ch, True, (0,0,0)); shadow.set_alpha(80)
-            surface.blit(shadow, (tx+3, 198 + wave_y + 3))
-            ch_surf = font.render(ch, True, colors[col_idx])
-            surface.blit(ch_surf, (tx, 198 + wave_y))
-            tx += font.size(ch)[0]
+        # Arcade-style 3D extruded title — pink→orange→yellow gradient
+        bob = int(6 * math.sin(self.t * 2.0))
+        title_font = _get_pixel_font(96)
+        title_surf = _render_arcade_title(
+            title_font, "CANDY CRUSH",
+            top_color=(255, 110, 180), bot_color=(255, 215,  80),
+            depth=12, extrude_color=(110,  30, 130), outline_color=(40, 10, 60),
+        )
+        surface.blit(title_surf, (SCREEN_WIDTH // 2 - title_surf.get_width() // 2, 130 + bob))
 
         # Subtitle
-        sub = _get_font(20, bold=False).render("DSA Edition", True, (255, 240, 200))
+        sub = _get_font(22, bold=False).render("DSA EDITION", True, (90, 30, 110))
         sub.set_alpha(int(200 + 55 * math.sin(self.t * 2)))
-        surface.blit(sub, (SCREEN_WIDTH//2 - sub.get_width()//2, 268))
+        surface.blit(sub, (SCREEN_WIDTH//2 - sub.get_width()//2, 290 + bob))
 
         for key, rect in self.buttons.items():
-            _pill_button(surface, key.upper(), rect, hovered=rect.collidepoint(mouse_pos))
+            _btn(surface, key.upper(), rect, hovered=rect.collidepoint(mouse_pos))
 
     def handle_click(self, pos):
         for key, rect in self.buttons.items():
@@ -212,8 +353,8 @@ class MenuScreen:
 class GameOverScreen:
     def __init__(self, final_score):
         self.final_score = final_score; self.t = 0.0
-        self.retry_btn = pygame.Rect(SCREEN_WIDTH//2 - 115, 430, 105, 50)
-        self.menu_btn  = pygame.Rect(SCREEN_WIDTH//2 + 10,  430, 105, 50)
+        self.retry_btn = pygame.Rect(SCREEN_WIDTH//2 - 130, 430, 120, 58)
+        self.menu_btn  = pygame.Rect(SCREEN_WIDTH//2 + 10,  430, 120, 58)
         # Falling dark drizzle particles
         self.drizzle = [{'x': random.randint(0, SCREEN_WIDTH),
                           'y': random.uniform(-SCREEN_HEIGHT, 0),
@@ -248,11 +389,15 @@ class GameOverScreen:
         pygame.draw.rect(surface, (22, 10, 45), panel, border_radius=22)
         pygame.draw.rect(surface, (200, 50, 50), panel, width=3, border_radius=22)
 
-        # "GAME OVER" with flicker
-        flicker = 1.0 + 0.08 * math.sin(self.t * 18)
-        font_big = _get_font(int(42 * flicker))
-        title = font_big.render("GAME OVER", True, (255, 70, 70))
-        surface.blit(title, (panel.centerx - title.get_width()//2, panel.y + 18))
+        # "GAME OVER" — arcade 3D, red→pink, with subtle flicker
+        flicker = 1.0 + 0.04 * math.sin(self.t * 14)
+        tf = _get_pixel_font(int(60 * flicker))
+        title = _render_arcade_title(
+            tf, "GAME OVER",
+            top_color=(255, 200, 200), bot_color=(220,  40,  60),
+            depth=9, extrude_color=(110,  10,  20), outline_color=(40, 5, 10),
+        )
+        surface.blit(title, (panel.centerx - title.get_width() // 2, panel.y + 10))
 
         # Stars (0 since game over) — polygon to avoid missing glyph
         for i in range(3):
@@ -276,8 +421,8 @@ class GameOverScreen:
         sc = _get_font(36).render(str(self.final_score), True, ACCENT_GOLD)
         surface.blit(sc, (panel.centerx - sc.get_width()//2, panel.y + 160))
 
-        _pill_button(surface, "RETRY", self.retry_btn, self.retry_btn.collidepoint(mouse_pos))
-        _pill_button(surface, "MENU",  self.menu_btn,  self.menu_btn.collidepoint(mouse_pos))
+        _btn(surface, "RETRY", self.retry_btn, self.retry_btn.collidepoint(mouse_pos))
+        _btn(surface, "MENU",  self.menu_btn,  self.menu_btn.collidepoint(mouse_pos))
 
     def handle_click(self, pos):
         if self.retry_btn.collidepoint(pos): return "retry"
@@ -333,18 +478,15 @@ class LevelCompleteScreen:
         pygame.draw.rect(surface, (18, 10, 45), panel, border_radius=24)
         pygame.draw.rect(surface, (255, 210, 50), panel, width=3, border_radius=24)
 
-        # Rainbow title with wave
-        title_str = "LEVEL COMPLETE!"
-        tf = _get_font(36)
-        tw = sum(tf.size(ch)[0] for ch in title_str)
-        tx = panel.centerx - tw//2
-        for i, ch in enumerate(title_str):
-            wave = 6 * math.sin(self.t * 4 + i * 0.5)
-            hue = (int(self.t * 80) + i * 20) % 360
-            c = pygame.Color(0); c.hsva = (hue, 90, 100, 100)
-            ch_s = tf.render(ch, True, (c.r, c.g, c.b))
-            surface.blit(ch_s, (tx, panel.y + 16 + wave))
-            tx += tf.size(ch)[0]
+        # Arcade 3D title — gold/orange gradient, victory feel
+        tf = _get_pixel_font(54)
+        title_surf = _render_arcade_title(
+            tf, "LEVEL COMPLETE!",
+            top_color=(255, 240, 120), bot_color=(255, 140,  40),
+            depth=8, extrude_color=(140,  50,  10), outline_color=(50, 15, 5),
+        )
+        surface.blit(title_surf,
+                     (panel.centerx - title_surf.get_width() // 2, panel.y + 10))
 
         # Stars with glow — drawn as polygons (font lacks ★ glyph)
         for i in range(3):
@@ -373,7 +515,7 @@ class LevelCompleteScreen:
         sc_surf = _get_font(38).render(str(int(self.score_display)), True, ACCENT_GOLD)
         surface.blit(sc_surf, (panel.centerx - sc_surf.get_width()//2, panel.y + 174))
 
-        _pill_button(surface, "NEXT LEVEL", self.next_btn, self.next_btn.collidepoint(mouse_pos))
+        _btn(surface, "NEXT LEVEL", self.next_btn, self.next_btn.collidepoint(mouse_pos))
 
     def handle_click(self, pos):
         if self.next_btn.collidepoint(pos): return "next"
@@ -453,10 +595,14 @@ class PauseScreen:
         pygame.draw.rect(surface, (18, 10, 42), panel, border_radius=24)
         pygame.draw.rect(surface, (140, 90, 220), panel, width=3, border_radius=24)
 
-        pulse = abs(math.sin(self.t * 2.8))
-        tc = (int(190+65*pulse), int(170+55*pulse), 255)
-        title = _get_font(50).render("PAUSED", True, tc)
-        surface.blit(title, (panel.centerx - title.get_width()//2, panel.y + 20))
+        # Arcade 3D title — purple/violet gradient
+        tf = _get_pixel_font(64)
+        title = _render_arcade_title(
+            tf, "PAUSED",
+            top_color=(220, 180, 255), bot_color=(150,  70, 230),
+            depth=9, extrude_color=( 70,  20, 110), outline_color=(25, 5, 45),
+        )
+        surface.blit(title, (panel.centerx - title.get_width() // 2, panel.y + 12))
 
         hint = _get_font(16, bold=False).render("Press ESC to resume", True, (120, 110, 160))
         surface.blit(hint, (panel.centerx - hint.get_width()//2, panel.y + 82))
@@ -465,8 +611,8 @@ class PauseScreen:
         self._music_slider.draw(surface, (100, 180, 255), "MUSIC", lf)
         self._sfx_slider.draw(surface,   (255, 160,  60), "SFX",   lf)
 
-        _pill_button(surface, "RESUME", self.resume_btn, self.resume_btn.collidepoint(mouse_pos))
-        _pill_button(surface, "MENU",   self.menu_btn,   self.menu_btn.collidepoint(mouse_pos))
+        _btn(surface, "RESUME", self.resume_btn, self.resume_btn.collidepoint(mouse_pos))
+        _btn(surface, "MENU",   self.menu_btn,   self.menu_btn.collidepoint(mouse_pos))
 
 
 # ---------------------------------------------------------------------------
@@ -527,23 +673,26 @@ class LevelSelectScreen:
         for p in self.particles:
             draw_candy(surface, p.ctype, p.x, p.y, scale=p.scale, alpha=p.alpha)
 
-        # Title — 3D Lilita One
-        tf = _get_pixel_font(72)
-        title_surf = _render_3d(tf, "SELECT LEVEL", ACCENT_GOLD, depth=6,
-                                 shadow_col=(120, 70, 0))
+        # Arcade 3D title — gold/orange gradient
+        tf = _get_pixel_font(78)
+        title_surf = _render_arcade_title(
+            tf, "SELECT LEVEL",
+            top_color=(255, 235, 120), bot_color=(255, 145,  40),
+            depth=10, extrude_color=(140,  55,  10), outline_color=(45, 15, 5),
+        )
         tx = SCREEN_WIDTH // 2 - title_surf.get_width() // 2
-        surface.blit(title_surf, (tx, 58))
+        surface.blit(title_surf, (tx, 50))
 
         uw = title_surf.get_width() + 20
         ux = SCREEN_WIDTH // 2 - uw // 2
-        title_bottom = 58 + title_surf.get_height() + 4
+        title_bottom = 50 + title_surf.get_height() + 2
         pygame.draw.line(surface, ACCENT_GOLD, (ux, title_bottom), (ux + uw, title_bottom), 2)
 
         for i, (rect, cfg) in enumerate(zip(self.cards, LEVELS)):
             self._draw_card(surface, rect, cfg, i + 1, rect.collidepoint(mouse_pos))
 
-        _pill_button(surface, "BACK", self.back_btn,
-                     self.back_btn.collidepoint(mouse_pos))
+        _btn(surface, "BACK", self.back_btn,
+             self.back_btn.collidepoint(mouse_pos))
 
     # ------------------------------------------------------------------ card
     def _draw_card(self, surface, rect, cfg, level_num, hovered):

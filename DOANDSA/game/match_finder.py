@@ -38,41 +38,56 @@ class MatchFinder:
             return WRAPPED             
 
 
+    # Caged cells coi như chướng ngại — không tham gia match, ngắt streak
+    @staticmethod
+    def _is_caged(board, r, c) -> bool:
+        return (r, c) in getattr(board, "cages", {})
+
     # Hàm private để scan hàng
     def _scan_row(self, board, row):
         res = []
         streak = set()
-        current_type = None         
+        current_type = None
         for c in range(GRID_COLS):
             candy = board.grid[row][c]
-            if candy and candy.candy_type == current_type:
+            blocked = self._is_caged(board, row, c)
+            if candy and not blocked and candy.candy_type == current_type:
                 streak.add((row, c))
             else:
                 if len(streak) >= 3:
                     res.append(streak)
-                current_type = candy.candy_type if candy else None
-                streak = {(row, c)} if candy else set()
-        if len(streak) >= 3:         
+                if candy and not blocked:
+                    current_type = candy.candy_type
+                    streak = {(row, c)}
+                else:
+                    current_type = None
+                    streak = set()
+        if len(streak) >= 3:
             res.append(streak)
-        return res                   
+        return res
 
-    # Hàm private để scan cột           
+    # Hàm private để scan cột
     def _scan_col(self, board, col):
         res = []
         streak = set()
-        current_type = None          
+        current_type = None
         for r in range(GRID_ROWS):
             candy = board.grid[r][col]
-            if candy and candy.candy_type == current_type:
+            blocked = self._is_caged(board, r, col)
+            if candy and not blocked and candy.candy_type == current_type:
                 streak.add((r, col))
             else:
                 if len(streak) >= 3:
                     res.append(streak)
-                current_type = candy.candy_type if candy else None
-                streak = {(r, col)} if candy else set()
-        if len(streak) >= 3:         
+                if candy and not blocked:
+                    current_type = candy.candy_type
+                    streak = {(r, col)}
+                else:
+                    current_type = None
+                    streak = set()
+        if len(streak) >= 3:
             res.append(streak)
-        return res                   
+        return res
     # Hàm check có phải color Bomb
     def _is_straight_5(self, group: set[tuple]) -> bool:
         if len(group) != 5:

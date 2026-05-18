@@ -55,6 +55,9 @@ class Board:
         #Không cạnh nhau thì sẽ không swap được
         if not self.is_adjacent(r1,c1,r2,c2) :
             return False, [], []
+        # Caged candy bị khóa — không cho swap cho đến khi lồng vỡ
+        if (r1, c1) in self.cages or (r2, c2) in self.cages:
+            return False, [], []
         activations = []
         # Check Combo đặc biệt trước
         # Check Combo 2 viên kẹo dặc biệt
@@ -126,6 +129,10 @@ class Board:
             candy = self.get_candy(r, c)
             if candy is None:
                 continue
+            # Caged candy — bất khả xâm phạm cho đến khi lồng vỡ
+            if (r, c) in self.cages:
+                processed.add((r, c))
+                continue
             # Con tin bất tử — xóa kẹo ngay bên dưới để con tin có chỗ rơi
             if (r, c) in self.hostages:
                 processed.add((r, c))
@@ -154,56 +161,61 @@ class Board:
         #Trả về các viên kẹo đặc biệt để kích hoạt hiệu ứng UI
         return activations
 
+    # Tách 1 cột thành các đoạn không bị chặn bởi cage (cage = vật cản tĩnh)
+    def _col_segments(self, col: int) -> list[tuple[int, int]]:
+        cage_rows = sorted(r for (r, cc) in self.cages if cc == col)
+        bounds = [-1] + cage_rows + [GRID_ROWS]
+        return [(bounds[i] + 1, bounds[i + 1] - 1)
+                for i in range(len(bounds) - 1)
+                if bounds[i] + 1 <= bounds[i + 1] - 1]
+
     # Kích hoạt cơ chế trọng lực ( Viên kẹo rớt xuống )
     def apply_gravity(self) -> list[tuple]:
         moves = []
         for col in range(GRID_COLS):
-            #Thu thập các candy không None, từ dưới lên trên
-            stack = []
-            for row in range(GRID_ROWS - 1, -1, -1):
-                if self.grid[row][col] is not None:
-                    stack.append((row, self.grid[row][col]))
+            for top, bot in self._col_segments(col):
+                # Thu thập kẹo non-None trong segment, từ dưới lên
+                stack = []
+                for row in range(bot, top - 1, -1):
+                    if self.grid[row][col] is not None:
+                        stack.append((row, self.grid[row][col]))
 
-            # Dùng `placed` thay vì `i` để tính to_row
-            # — tránh tạo hole ở đáy khi rescue con tin
-            placed = 0
-            for from_row, candy in stack:
-                to_row = GRID_ROWS - 1 - placed
-                # Con tin chạm đáy → giải cứu, không đặt vào grid
-                if (from_row, col) in self.hostages and to_row == GRID_ROWS - 1:
-                    self.hostages.discard((from_row, col))
-                    self.rescued_count += 1
-                    continue  # không tăng placed → các kẹo phía trên fill xuống
-                self.grid[to_row][col] = candy
-                if (from_row, col) in self.hostages:
-                    self.hostages.discard((from_row, col))
-                    self.hostages.add((to_row, col))
-                if from_row != to_row:
-                    moves.append((from_row, col, to_row, col))
-                placed += 1
+                placed = 0
+                for from_row, candy in stack:
+                    to_row = bot - placed
+                    # Con tin chạm đáy thật của board → giải cứu
+                    if (from_row, col) in self.hostages and to_row == GRID_ROWS - 1:
+                        self.hostages.discard((from_row, col))
+                        self.rescued_count += 1
+                        continue
+                    self.grid[to_row][col] = candy
+                    if (from_row, col) in self.hostages:
+                        self.hostages.discard((from_row, col))
+                        self.hostages.add((to_row, col))
+                    if from_row != to_row:
+                        moves.append((from_row, col, to_row, col))
+                    placed += 1
 
-            # Các ô trống phía trên set None để fill_empty xử lý đúng
-            for row in range(GRID_ROWS - placed):
-                self.grid[row][col] = None
-
+                # Top của segment thành None để fill_empty xử lý
+                segment_len = bot - top + 1
+                for row in range(top, top + segment_len - placed):
+                    self.grid[row][col] = None
         return moves
 
     def fill_empty(self) -> list[tuple[int, int, int, int]]:
         record = []
         for c in range(GRID_COLS):
-            # Đếm số None cần được fill
-            empty_count = 0
-            for r in range(GRID_ROWS):
-                if self.grid[r][c] is None:
-                    empty_count += 1
-            
-            # FIll từ cao xuống thấp
-            for i in range(empty_count):
-                row = empty_count - 1 - i
-                self.grid[row][c] = Candy()
-                self.grid[row][c].is_new = True
-                #Record trả về danh sách kẹo để UI làm việc 
-                record.append((row - empty_count, c, row, c))
+            for top, bot in self._col_segments(c):
+                empty_count = sum(1 for r in range(top, bot + 1) if self.grid[r][c] is None)
+                if not empty_count:
+                    continue
+                # Fill các ô None ở đầu segment (vì gravity đã dồn xuống đáy)
+                for i in range(empty_count):
+                    row = top + i
+                    self.grid[row][c] = Candy()
+                    self.grid[row][c].is_new = True
+                    # Kẹo rơi từ phía trên segment vào (top - empty_count + i)
+                    record.append((top - empty_count + i, c, row, c))
         return record
 
     def __repr__(self):

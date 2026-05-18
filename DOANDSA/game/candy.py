@@ -5,10 +5,10 @@ from constants import CANDY_TYPES, GRID_ROWS, GRID_COLS
 
 # ─── Special type constants ────────────────────────────────────────────────
 NORMAL      = "normal"
-STRIPED_H   = "striped_h"   # match 4 in a row  → clears whole row
-STRIPED_V   = "striped_v"   # match 4 in a col  → clears whole column
-WRAPPED     = "wrapped"     # L/T shape (5)      → clears 3×3 twice
-COLOR_BOMB  = "color_bomb"  # 5 in a line        → clears all of one color
+STRIPED_H   = "striped_h"   
+STRIPED_V   = "striped_v"  
+WRAPPED     = "wrapped"     
+COLOR_BOMB  = "color_bomb"  
 
 class Candy:
 
